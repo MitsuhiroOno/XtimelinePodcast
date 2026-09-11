@@ -4,6 +4,7 @@ import "dotenv/config";
 import { Command } from "commander";
 import { fetchTimelineViaTwitterCli } from "./ingest/fetchTwitterCli.js";
 import { loadTweetsFromFile } from "./ingest/loadFromFile.js";
+import { filterTweets } from "./ingest/filterTweets.js";
 import { organizeTopics } from "./llm/organizeTopics.js";
 import { generateDialogue } from "./llm/generateDialogue.js";
 import { renderTranscriptJson, renderTranscriptMarkdown } from "./render/renderTranscript.js";
@@ -30,7 +31,7 @@ program
     try {
       const tweets = await fetchTimelineViaTwitterCli({
         max: Number(opts.max),
-        timelineType: opts.following ? "following" : "home",
+        timelineType: opts.following ? "following" : "for-you",
       });
       await writeFile(opts.output, JSON.stringify(tweets, null, 2), "utf8");
       logger.info(`${tweets.length}件のツイートを取得し ${opts.output} に保存しました。`);
@@ -51,6 +52,8 @@ program
   .option("--model <model>", "使用するモデル名（省略時は環境変数 ANTHROPIC_MODEL / claude-sonnet-5）")
   .option("--style <note>", "番組のトーンに関する追加指示")
   .option("--max-tweets <number>", "整理対象とするツイート数の上限", "300")
+  .option("--exclude-retweets", "リツイート/リポストを整理対象から除外する")
+  .option("--exclude-replies", "リプライを整理対象から除外する")
   .action(async (opts) => {
     try {
       const tweets = await loadTweetsFromFile(opts.input);
@@ -78,11 +81,13 @@ program
   .option("--model <model>", "使用するモデル名（省略時は環境変数 ANTHROPIC_MODEL / claude-sonnet-5）")
   .option("--style <note>", "番組のトーンに関する追加指示")
   .option("--max-tweets <number>", "整理対象とするツイート数の上限", "300")
+  .option("--exclude-retweets", "リツイート/リポストを整理対象から除外する")
+  .option("--exclude-replies", "リプライを整理対象から除外する")
   .action(async (opts) => {
     try {
       const tweets = await fetchTimelineViaTwitterCli({
         max: Number(opts.max),
-        timelineType: opts.following ? "following" : "home",
+        timelineType: opts.following ? "following" : "for-you",
       });
       logger.info(`${tweets.length}件のツイートを取得しました。`);
       if (opts.saveTweets) {
@@ -96,7 +101,7 @@ program
   });
 
 async function runGenerate(
-  tweets: Tweet[],
+  allTweets: Tweet[],
   opts: {
     hosts: string;
     language: string;
@@ -104,6 +109,8 @@ async function runGenerate(
     model?: string;
     style?: string;
     maxTweets: string;
+    excludeRetweets?: boolean;
+    excludeReplies?: boolean;
   }
 ) {
   const hosts = opts.hosts
@@ -112,6 +119,15 @@ async function runGenerate(
     .filter(Boolean);
   if (hosts.length !== 2) {
     throw new Error("--hosts には必ず2名をカンマ区切りで指定してください（例: --hosts アヤ,ケン）。");
+  }
+
+  const tweets = filterTweets(allTweets, {
+    excludeRetweets: opts.excludeRetweets,
+    excludeReplies: opts.excludeReplies,
+    excludeEmptyText: true,
+  });
+  if (tweets.length !== allTweets.length) {
+    logger.info(`フィルタにより ${allTweets.length - tweets.length}件のツイートを除外しました（残り${tweets.length}件）。`);
   }
 
   logger.info("タイムラインをトピックごとに整理しています…");
