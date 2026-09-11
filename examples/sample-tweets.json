@@ -1,0 +1,51 @@
+{
+  "ok": true,
+  "schema_version": "1.0",
+  "data": [
+    {
+      "id": "1001",
+      "text": "新しいJavaScriptランタイムのベンチマーク結果を公開しました。起動速度が前バージョンより30%改善しています。",
+      "author": { "name": "Dev Taro", "username": "dev_taro" },
+      "created_at": "2026-09-10T09:00:00Z",
+      "public_metrics": { "like_count": 512, "retweet_count": 120, "reply_count": 34 }
+    },
+    {
+      "id": "1002",
+      "text": "@dev_taro すごい！実際のアプリでどれくらい体感できるものなんでしょうか？",
+      "author": { "name": "Hanako", "username": "hanako_dev" },
+      "created_at": "2026-09-10T09:15:00Z",
+      "in_reply_to_status_id": "1001",
+      "public_metrics": { "like_count": 20, "retweet_count": 1, "reply_count": 2 }
+    },
+    {
+      "id": "1003",
+      "text": "今日の東京は夕方から急に雷雨。傘を忘れて駅でずぶ濡れになった。",
+      "author": { "name": "Ken", "username": "ken_tokyo" },
+      "created_at": "2026-09-10T10:00:00Z",
+      "public_metrics": { "like_count": 44, "retweet_count": 2, "reply_count": 5 }
+    },
+    {
+      "id": "1004",
+      "text": "RT @newsdesk: 新しい省エネ家電の補助金制度、来月から申請受付開始とのこと。詳細は公式サイトで。",
+      "type": "retweet",
+      "author": { "name": "Saito", "username": "saito_x" },
+      "created_at": "2026-09-10T10:20:00Z",
+      "public_metrics": { "like_count": 8, "retweet_count": 3, "reply_count": 0 }
+    },
+    {
+      "id": "1005",
+      "text": "【PR】今なら新規登録で1000ポイントプレゼント！今すぐアプリをダウンロード→ https://example.com/promo",
+      "author": { "name": "PromoBot", "username": "promo_bot" },
+      "created_at": "2026-09-10T10:30:00Z",
+      "public_metrics": { "like_count": 1, "retweet_count": 0, "reply_count": 0 }
+    },
+    {
+      "id": "1006",
+      "text": "話題のJSランタイム、うちのCIでも試したらビルド時間が体感で速くなった気がする。計測してみる。",
+      "author": { "name": "CI Nerd", "username": "ci_nerd" },
+      "created_at": "2026-09-10T11:00:00Z",
+      "public_metrics": { "like_count": 76, "retweet_count": 9, "reply_count": 4 }
+    }
+  ],
+  "pagination": { "next_cursor": null }
+}
