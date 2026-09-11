@@ -1,5 +1,6 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages.js";
 import { DEFAULT_MODEL, getAnthropicClient } from "./client.js";
+import { recoverStringifiedToolInput } from "./recoverToolInput.js";
 import type {
   DialogueTurn,
   GenerateOptions,
@@ -126,6 +127,10 @@ export async function generateDialogue(
     ],
   });
 
+  if (process.env.DEBUG_LLM) {
+    console.error("[DEBUG_LLM generateDialogue raw]", JSON.stringify(message, null, 2));
+  }
+
   const toolUse = message.content.find(
     (block): block is Extract<typeof block, { type: "tool_use" }> =>
       block.type === "tool_use" && block.name === "submit_script"
@@ -134,14 +139,15 @@ export async function generateDialogue(
     throw new Error("Claude から台本（tool_use）が返却されませんでした。");
   }
 
-  const input = toolUse.input as {
+  const input = recoverStringifiedToolInput(toolUse.input) as {
     title?: string;
     description?: string;
     turns?: Array<{ speaker?: string; text?: string }>;
   };
 
   const validSpeakers = new Set(options.hosts);
-  const turns: DialogueTurn[] = (input.turns ?? [])
+  const rawTurns = Array.isArray(input.turns) ? input.turns : [];
+  const turns: DialogueTurn[] = rawTurns
     .filter((t) => typeof t.text === "string" && t.text.trim().length > 0)
     .map((t) => ({
       speaker: t.speaker && validSpeakers.has(t.speaker) ? t.speaker : options.hosts[0],
