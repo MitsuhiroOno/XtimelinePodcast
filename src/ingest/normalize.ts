@@ -1,11 +1,21 @@
 import type { Tweet } from "../types.js";
 
 /**
- * twitter-cli (https://github.com/public-clis/twitter-cli) の JSON/YAML 出力は
- * `{ ok, schema_version, data, pagination }` のようなエンベロープを持つことがあり、
- * `data` は配列そのものだったり `{ tweets: [...] }` のように入れ子になっていたりする。
- * バージョンやコマンド（feed / bookmarks / search 等）によってフィールド名も
- * 揺らぎ得るため、ここでは特定のスキーマに固定せず緩やかに正規化する。
+ * twitter-cli (https://github.com/public-clis/twitter-cli, PyPI: `twitter-cli`) の
+ * JSON/YAML 出力を内部の Tweet 型へ正規化する。
+ *
+ * 実パッケージ (0.8.5時点) で確認したところ、`feed --json` 等の成功時レスポンスは
+ * `{ ok: true, schema_version: "1", data: [<tweet>, ...] }` というエンベロープを持ち、
+ * 各ツイートは概ね次の形をしている:
+ *   { id, text, author: { id, name, screenName, profileImageUrl, verified },
+ *     metrics: { likes, retweets, replies, quotes, views, bookmarks },
+ *     createdAt, createdAtISO, createdAtLocal, media[], urls[], isRetweet,
+ *     retweetedBy, lang, score, articleTitle?, articleText?, quotedTweet? }
+ * エラー時は `{ ok: false, schema_version: "1", error: { code, message } }`。
+ *
+ * とはいえツール側のバージョンアップや他の類似ツールでの利用によりフィールド名が
+ * 変わる可能性はあるため、ここでは上記を第一候補としつつ、よくある別名（snake_case版等）
+ * も幅広く吸収できるようにしている。
  */
 
 type Json = Record<string, unknown>;
@@ -41,6 +51,15 @@ function pickNumber(obj: Json, keys: string[]): number | undefined {
 function pickBoolean(obj: Json, keys: string[]): boolean | undefined {
   const v = pick(obj, keys);
   if (typeof v === "boolean") return v;
+  return undefined;
+}
+
+/** 候補キーを順に見て、最初に見つかった「空でない」文字列を返す（空文字は読み飛ばす） */
+function firstNonEmptyString(obj: Json, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const v = obj[key];
+    if (typeof v === "string" && v.trim() !== "") return v;
+  }
   return undefined;
 }
 
@@ -128,6 +147,19 @@ function normalizeMetrics(raw: Json): Tweet["metrics"] {
   };
 }
 
+/**
+ * ツイート本文を解決する。twitter-cli の Article ツイート（`articleTitle`/`articleText`）は
+ * `text` が空・短い場合があるため、記事本文があればそちらを優先して使う。
+ */
+function resolveText(raw: Json): string {
+  const articleTitle = firstNonEmptyString(raw, ["articleTitle"]);
+  const articleText = firstNonEmptyString(raw, ["articleText"]);
+  if (articleText) {
+    return articleTitle ? `${articleTitle}\n${articleText}` : articleText;
+  }
+  return firstNonEmptyString(raw, ["text", "full_text", "fullText", "content", "body"]) ?? "";
+}
+
 function buildTweetUrl(raw: Json, id: string, handle: string): string | null {
   const direct = pickString(raw, ["url", "permalink", "link"]);
   if (direct) return direct;
@@ -143,20 +175,15 @@ export function normalizeTweet(raw: Json): Tweet {
     pickString(raw, ["id", "id_str", "tweetId", "rest_id"]) ??
     `unknown-${++fallbackCounter}`;
 
-  const text =
-    pickString(raw, [
-      "text",
-      "full_text",
-      "fullText",
-      "content",
-      "articleText",
-      "body",
-    ]) ?? "";
+  const text = resolveText(raw);
 
   const { name, handle } = normalizeAuthor(raw);
 
+  // twitter-cli は createdAtISO（ISO8601）/ createdAt（Twitter生形式）の両方を持つため、
+  // 扱いやすいISO形式を優先する。
   const createdAt =
-    pickString(raw, ["createdAt", "created_at", "date", "timestamp"]) ?? null;
+    firstNonEmptyString(raw, ["createdAtISO", "createdAt", "created_at", "date", "timestamp"]) ??
+    null;
 
   const explicitRetweetFlag = pickBoolean(raw, ["isRetweet", "retweeted"]);
   const typeSaysRetweet = pickString(raw, ["type"])?.toLowerCase() === "retweet";

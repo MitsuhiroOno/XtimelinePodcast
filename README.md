@@ -35,12 +35,18 @@ cp .env.example .env
 ### twitter-cli の準備（タイムラインを直接取得する場合）
 
 ```bash
-uv tool install twitter-cli   # または: pipx install twitter-cli
+pip install twitter-cli   # または: uv tool install twitter-cli / pipx install twitter-cli
 ```
 
 初回はブラウザ（Chrome/Edge/Firefox/Brave/Arc等）でXにログインした状態にしておくと、
 twitter-cli がそのCookieを自動抽出して認証します（`TWITTER_AUTH_TOKEN` / `TWITTER_CT0`
-環境変数での認証も可能）。詳細は twitter-cli 本体のドキュメントを参照してください。
+環境変数での認証も可能）。認証状態は `twitter status` で確認できます。詳細は
+twitter-cli 本体のドキュメントを参照してください。
+
+`twitter feed -t for-you|following --max N --json` のように、フィードは
+「for-you（おすすめ・アルゴリズム順）」と「following（フォロー中・時系列順）」の
+2種類から選べます。本ツールの `--following` フラグはこの `following` に対応し、
+省略時は `for-you` を取得します。
 
 手元に別途エクスポート済みの `twitter feed --json` 出力がある場合は、twitter-cli自体の
 インストールは不要で、`generate` コマンドにそのファイルを渡すだけで使えます。
@@ -86,6 +92,9 @@ npm run dev -- generate --input examples/sample-tweets.json --output /tmp/podcas
 | `--model claude-opus-5` | 使用するモデル名 | `ANTHROPIC_MODEL` または `claude-sonnet-5` |
 | `--style "もっとテンポよく、笑いを交えて"` | トーンに関する追加指示 | なし |
 | `--json-output script.json` | 発話ターンなどの構造化データも保存 | なし |
+| `--exclude-retweets` | リツイート/リポストを整理対象から除外 | 除外しない |
+| `--exclude-replies` | リプライを整理対象から除外 | 除外しない |
+| `--max-tweets 300` | トピック整理に渡すツイート数の上限 | `300` |
 
 ビルド後は `xtimeline-podcast` コマンドとしても実行できます（`npm run build` 後、`npm link` 等で）。
 
@@ -107,6 +116,7 @@ src/
     normalize.ts            # twitter-cli等のスキーマ揺らぎを吸収する正規化層
     loadFromFile.ts          # JSON/YAMLファイルからの読み込み
     fetchTwitterCli.ts       # twitter-cliをサブプロセスとして呼び出す
+    filterTweets.ts          # RT/リプライ等の除外フィルタ
   llm/
     client.ts                # Anthropic SDKクライアント
     organizeTopics.ts        # ツイート→トピック整理（tool use）
@@ -122,9 +132,14 @@ src/
 - twitter-cli はブラウザのログインCookieを利用してX/Twitterへアクセスします。**自分自身のアカウント**での
   個人利用を前提としており、Xの利用規約に従って利用してください。大量アカウントへの一括アクセスや、
   他者のログイン情報の無断利用などには使用しないでください。
-- twitter-cli の出力スキーマはツール側のバージョンにより変わる可能性があります。`normalize.ts` は
-  よくあるフィールド名（`text`/`full_text`、`author.username`/`user.screen_name` 等）を
-  幅広く吸収するように書かれていますが、想定外の形式で正しく取得できない場合は
-  `src/ingest/normalize.ts` の `pick*` 系ヘルパーに候補キーを追加してください。
+- twitter-cli (PyPI版 0.8.5) のソースコードを確認し、実際の出力スキーマ
+  （`{ ok, schema_version, data: [{ id, text, author: { name, screenName, ... },
+  metrics: { likes, retweets, replies, ... }, createdAt, createdAtISO, isRetweet,
+  quotedTweet, articleTitle, articleText, ... } ] }`）に合わせて `normalize.ts` を
+  調整済みです。将来的なツール側のバージョンアップでフィールド名が変わった場合や、
+  類似の別ツールを使う場合に備えて、よくある別名（snake_case版等）も幅広く吸収する
+  作りにしています。想定外の形式で正しく取得できない場合は
+  `src/ingest/normalize.ts` の `pick*` / `firstNonEmptyString` 系ヘルパーに
+  候補キーを追加してください。
 - 生成される台本はあくまで「Xでこういう投稿が話題になっている」という紹介であり、事実の断定的な
   解説ではありません（プロンプト内でもその旨を指示しています）。
