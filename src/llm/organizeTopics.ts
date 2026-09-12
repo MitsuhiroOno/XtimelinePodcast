@@ -1,5 +1,6 @@
 import type { Tool } from "@anthropic-ai/sdk/resources/messages.js";
 import { DEFAULT_MODEL, getAnthropicClient } from "./client.js";
+import { recoverStringifiedToolInput } from "./recoverToolInput.js";
 import type { OrganizedTimeline, Topic, Tweet } from "../types.js";
 
 const MAX_TEXT_LENGTH = 280;
@@ -117,6 +118,10 @@ export async function organizeTopics(
     ],
   });
 
+  if (process.env.DEBUG_LLM) {
+    console.error("[DEBUG_LLM organizeTopics raw]", JSON.stringify(message, null, 2));
+  }
+
   const toolUse = message.content.find(
     (block): block is Extract<typeof block, { type: "tool_use" }> =>
       block.type === "tool_use" && block.name === "submit_topics"
@@ -125,7 +130,7 @@ export async function organizeTopics(
     throw new Error("Claude からトピック整理結果（tool_use）が返却されませんでした。");
   }
 
-  const input = toolUse.input as {
+  const input = recoverStringifiedToolInput(toolUse.input) as {
     topics?: Array<{
       title?: string;
       summary?: string;
@@ -137,14 +142,18 @@ export async function organizeTopics(
 
   const validIds = new Set(targetTweets.map((t) => t.id));
 
-  const topics: Topic[] = (input.topics ?? []).map((t) => ({
+  const rawTopics = Array.isArray(input.topics) ? input.topics : [];
+  const topics: Topic[] = rawTopics.map((t) => ({
     title: t.title ?? "(無題)",
     summary: t.summary ?? "",
     importance: clampImportance(t.importance),
-    tweetIds: (t.tweetIds ?? []).filter((id) => validIds.has(id)),
+    tweetIds: (Array.isArray(t.tweetIds) ? t.tweetIds : []).filter((id) => validIds.has(id)),
   }));
 
-  const unclassifiedTweetIds = (input.unclassifiedTweetIds ?? []).filter((id) =>
+  const rawUnclassified = Array.isArray(input.unclassifiedTweetIds)
+    ? input.unclassifiedTweetIds
+    : [];
+  const unclassifiedTweetIds = rawUnclassified.filter((id) =>
     validIds.has(id)
   );
 
