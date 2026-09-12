@@ -8,8 +8,11 @@ import { filterTweets } from "./ingest/filterTweets.js";
 import { organizeTopics } from "./llm/organizeTopics.js";
 import { generateDialogue } from "./llm/generateDialogue.js";
 import { renderTranscriptJson, renderTranscriptMarkdown } from "./render/renderTranscript.js";
+import { loadScriptFromJson } from "./render/loadScript.js";
+import { createOpenAiTtsProvider } from "./tts/openai.js";
+import { synthesizeScript } from "./tts/synthesizeScript.js";
 import { logger } from "./utils/logger.js";
-import type { GenerateOptions, Tweet } from "./types.js";
+import type { GenerateOptions, PodcastScript, Tweet } from "./types.js";
 
 const program = new Command();
 
@@ -54,6 +57,11 @@ program
   .option("--max-tweets <number>", "整理対象とするツイート数の上限", "300")
   .option("--exclude-retweets", "リツイート/リポストを整理対象から除外する")
   .option("--exclude-replies", "リプライを整理対象から除外する")
+  .option("--audio <path>", "台本をTTSで音声化してmp3として保存する（OPENAI_API_KEYが必要）")
+  .option("--voices <names>", "ホスト順の声をカンマ区切りで指定（例: nova,onyx）")
+  .option("--tts-model <model>", "TTSモデル名（省略時は OPENAI_TTS_MODEL / gpt-4o-mini-tts）")
+  .option("--speed <number>", "読み上げ速度（0.25〜4.0）")
+  .option("--concurrency <number>", "音声合成の同時リクエスト数", "3")
   .action(async (opts) => {
     try {
       const tweets = await loadTweetsFromFile(opts.input);
@@ -83,6 +91,11 @@ program
   .option("--max-tweets <number>", "整理対象とするツイート数の上限", "300")
   .option("--exclude-retweets", "リツイート/リポストを整理対象から除外する")
   .option("--exclude-replies", "リプライを整理対象から除外する")
+  .option("--audio <path>", "台本をTTSで音声化してmp3として保存する（OPENAI_API_KEYが必要）")
+  .option("--voices <names>", "ホスト順の声をカンマ区切りで指定（例: nova,onyx）")
+  .option("--tts-model <model>", "TTSモデル名（省略時は OPENAI_TTS_MODEL / gpt-4o-mini-tts）")
+  .option("--speed <number>", "読み上げ速度（0.25〜4.0）")
+  .option("--concurrency <number>", "音声合成の同時リクエスト数", "3")
   .action(async (opts) => {
     try {
       const tweets = await fetchTimelineViaTwitterCli({
@@ -95,6 +108,25 @@ program
       }
       const script = await runGenerate(tweets, opts);
       await writeOutputs(script, opts);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("speak")
+  .description("生成済みの台本JSONをTTSで音声化してmp3を作る（OPENAI_API_KEYが必要）")
+  .requiredOption("-i, --input <path>", "`generate --json-output` で保存した台本JSON")
+  .requiredOption("-o, --output <path>", "出力先mp3ファイルパス")
+  .option("--voices <names>", "ホスト順の声をカンマ区切りで指定（例: nova,onyx）")
+  .option("--tts-model <model>", "TTSモデル名（省略時は OPENAI_TTS_MODEL / gpt-4o-mini-tts）")
+  .option("--speed <number>", "読み上げ速度（0.25〜4.0）")
+  .option("--concurrency <number>", "音声合成の同時リクエスト数", "3")
+  .action(async (opts) => {
+    try {
+      const script = await loadScriptFromJson(opts.input);
+      logger.info(`台本を読み込みました（${script.turns.length}ターン、出演: ${script.hosts.join(" / ")}）。`);
+      await runSpeak(script, { ...opts, audio: opts.output });
     } catch (err) {
       fail(err);
     }
@@ -153,7 +185,15 @@ async function runGenerate(
 
 async function writeOutputs(
   script: Awaited<ReturnType<typeof generateDialogue>>,
-  opts: { output: string; jsonOutput?: string }
+  opts: {
+    output: string;
+    jsonOutput?: string;
+    audio?: string;
+    voices?: string;
+    ttsModel?: string;
+    speed?: string;
+    concurrency?: string;
+  }
 ) {
   await writeFile(opts.output, renderTranscriptMarkdown(script), "utf8");
   logger.info(`台本を ${opts.output} に保存しました（${script.turns.length}ターン）。`);
@@ -161,6 +201,61 @@ async function writeOutputs(
     await writeFile(opts.jsonOutput, renderTranscriptJson(script), "utf8");
     logger.info(`構造化データを ${opts.jsonOutput} に保存しました。`);
   }
+  if (opts.audio) {
+    await runSpeak(script, { ...opts, audio: opts.audio });
+  }
+}
+
+/** 台本を音声合成してmp3として保存する */
+async function runSpeak(
+  script: PodcastScript,
+  opts: {
+    audio: string;
+    voices?: string;
+    ttsModel?: string;
+    speed?: string;
+    concurrency?: string;
+  }
+) {
+  if (script.turns.length === 0) {
+    logger.warn("台本のターンが0件のため、音声合成をスキップしました。");
+    return;
+  }
+
+  const provider = createOpenAiTtsProvider({
+    model: opts.ttsModel,
+    speed: opts.speed ? Number(opts.speed) : undefined,
+  });
+
+  // --voices "nova,onyx" のように、ホストの並び順で声を割り当てる
+  const voiceByHost: Record<string, string> = {};
+  if (opts.voices) {
+    const voices = opts.voices.split(",").map((v) => v.trim()).filter(Boolean);
+    script.hosts.forEach((host, i) => {
+      if (voices[i]) voiceByHost[host] = voices[i];
+    });
+  }
+
+  logger.info(`音声を合成しています（${provider.name}）…`);
+  const result = await synthesizeScript(script, {
+    provider,
+    voiceByHost,
+    concurrency: opts.concurrency ? Number(opts.concurrency) : 3,
+    onProgress: (done, total) => {
+      if (done === total || done % 10 === 0) {
+        logger.info(`  合成中… ${done}/${total} ターン`);
+      }
+    },
+  });
+
+  await writeFile(opts.audio, result.audio);
+  const assignments = Object.entries(result.voiceByHost)
+    .map(([host, voice]) => `${host}=${voice}`)
+    .join(", ");
+  logger.info(
+    `音声を ${opts.audio} に保存しました（${(result.audio.length / 1024 / 1024).toFixed(1)}MB, ` +
+      `読み上げ${result.totalCharacters}文字, 声: ${assignments}）。`
+  );
 }
 
 function fail(err: unknown): never {
